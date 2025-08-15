@@ -186,6 +186,26 @@ Always use the least amount of blade possible.
       <!-- Keep in sync with sendto_silhouette.py line 7 __version__ = ... -->
       <label name="about_version" translatable="no">Version 1.29</label>
     </page>
+
+    <page name='sequence' gui-text='Sequence'>
+        <label translatable="no">custom extension for sequence cut</label>
+        <vbox>
+            <param name="enable_sequence0" type="bool" _gui-text="enable sequence #0" />
+            <param name="sequence0" type="path" mode="file" _gui-text="" />
+        </vbox>
+        <vbox>
+            <param name="enable_sequence1" type="bool" _gui-text="enable sequence #1" />
+            <param name="sequence1" type="path" mode="file" _gui-text="" />
+        </vbox>
+        <vbox>
+            <param name="enable_sequence2" type="bool" _gui-text="enable sequence #2" />
+            <param name="sequence2" type="path" mode="file" _gui-text="" />
+        </vbox>
+        <vbox>
+            <param name="enable_sequence3" type="bool" _gui-text="enable sequence #3" />
+            <param name="sequence3" type="path" mode="file" _gui-text="" />
+        </vbox>
+    </page>
   </param>
 
   <effect needs-live-preview="false" >

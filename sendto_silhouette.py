@@ -9,6 +9,7 @@ __version__ = "1.29"     # Keep in sync with sendto_silhouette.inx ca line 179
 __author__ = "Juergen Weigert <juergen@fabmail.org> and contributors"
 
 import sys, os, time, math, operator
+import csv
 
 # we sys.path.append() the directory where this script lives.
 sys.path.append(os.path.dirname(os.path.abspath(sys.argv[0])))
@@ -280,6 +281,15 @@ class SendtoSilhouette(EffectExtension):
         # Can't set up the log here because arguments have not yet been parsed;
         # defer that to the top of the effect() method, which is where all
         # of the real activity happens.
+        # custom sequence cut:
+        pars.add_argument("--enable_sequence0", type = Boolean, default = False)
+        pars.add_argument("--sequence0", type = str)
+        pars.add_argument("--enable_sequence1", type = Boolean, default = False)
+        pars.add_argument("--sequence1", type = str)
+        pars.add_argument("--enable_sequence2", type = Boolean, default = False)
+        pars.add_argument("--sequence2", type = str)
+        pars.add_argument("--enable_sequence3", type = Boolean, default = False)
+        pars.add_argument("--sequence3", type = str)
 
 
     def report(self, message, level):
@@ -631,6 +641,40 @@ class SendtoSilhouette(EffectExtension):
         return cut
 
     def effect(self):
+        if self.options.enable_sequence0:
+            self.sequence(self.options.sequence0)
+        elif self.options.enable_sequence1:
+            self.sequence(self.options.sequence1)
+        elif self.options.enable_sequence2:
+            self.sequence(self.options.sequence2)
+        elif self.options.enable_sequence3:
+            self.sequence(self.options.sequence3)
+        else:
+            self.single()
+
+
+    def sequence(self, input_path):
+        if input_path:
+            with open(input_path, newline='') as csvfile:
+                csvreader = csv.DictReader(csvfile)
+                was_preview = self.options.preview
+
+                for row in csvreader:
+                    self.options.toolholder = int(row['toolholder'])
+                    self.options.tool = row['tool']
+                    self.options.depth = int(row['depth'])
+                    self.options.pressure = int(row['pressure'])
+                    self.options.speed = int(row['speed'])
+                    self.options.multipass = int(row['multipass'])
+                    self.single()
+                    self.options.preview = False
+
+                self.options.preview = was_preview
+        else:
+            inkex.errormsg("No input file specified.")
+
+
+    def single(self):
         log_path = self.options.logfile or self.default_logfile_path
         mode = "a" if self.options.append_logs else "w"
         self.log = open(log_path, mode)
