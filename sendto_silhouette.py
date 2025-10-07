@@ -261,10 +261,10 @@ class SendtoSilhouette(EffectExtension):
                 help="Adjustment to the position after cutting")
         pars.add_argument("--logfile",
                 dest = "logfile", default = None,
-                help="Name of file in which to save log messages.")
+                help="Name of file in which to save log messages. (must be empty for sequence call)")
         pars.add_argument("--cmdfile",
                 dest = "cmdfile", default = None,
-                help="Name of file to save transcript of cutter commands.")
+                help="Name of file to save transcript of cutter commands. (must be empty for sequence call)")
         pars.add_argument("--inc_queries",
                 dest = "inc_queries", type = Boolean, default = False,
                 help="Include queries in cutter command transcript")
@@ -641,6 +641,16 @@ class SendtoSilhouette(EffectExtension):
         return cut
 
     def effect(self):
+        log_path = self.options.logfile or self.default_logfile_path
+        mode = "a" if self.options.append_logs else "w"
+        self.log = open(log_path, mode)
+        if self.tty:
+            self.log = teeFile(self.tty, self.log)
+
+        if self.options.cmdfile:
+            mode = "ab" if self.options.append_logs else "wb"
+            self.cmdfile = open(self.options.cmdfile, mode)
+
         if self.options.enable_sequence0:
             self.sequence(self.options.sequence0)
         elif self.options.enable_sequence1:
@@ -654,6 +664,104 @@ class SendtoSilhouette(EffectExtension):
 
 
     def sequence(self, input_path):
+        self.logEnvironment()
+
+        # Registration Mark Selection/Calcuation
+        self.sync_regmark_settings()
+
+        # Init docTransform
+        self.initDocScale()
+
+        # Build a list of paths for the document's graphical elements
+        if self.options.ids:
+            # Traverse the selected objects
+            for id in self.options.ids:
+                self.recursivelyTraverseSvg([self.svg.selected[id]])
+        else:
+            # Traverse the entire document
+            self.recursivelyTraverseSvg(self.document.getroot())
+
+        if self.options.toolholder is not None:
+            self.options.toolholder = int(self.options.toolholder)
+        self.pen=None
+        self.autoblade=False
+        if self.options.tool == "pen":
+            self.pen=True
+        if self.options.tool == "cut":
+            self.pen=False
+        if self.options.tool == "autoblade":
+            self.pen=False
+            self.autoblade=True
+
+        # Reorder paths (except in case of Z-order)
+        if self.options.orient_paths != "natural":
+            index = dict(x=0,y=1)[self.options.orient_paths[-1]]
+            ordered = dict(des=operator.gt, asc=operator.lt)[self.options.orient_paths[0:3]]
+            self.paths = self.preorientPaths(self.paths, index, ordered)
+
+        # Optimize paths
+        if self.options.strategy == "matfree":
+            mf = MatFree("default", scale=1.0, pen=self.pen)
+            mf.verbose = 0    # inkscape crashes whenever something appears in stdout.
+            self.paths = mf.apply(self.paths)
+        elif self.options.strategy == "mintravel":
+            self.paths = silhouette.StrategyMinTraveling.sort(self.paths)
+        elif self.options.strategy == "mintravelfull":
+            self.paths = silhouette.StrategyMinTraveling.sort(self.paths, entrycircular=True)
+        elif self.options.strategy == "mintravelfwd":
+            self.paths = silhouette.StrategyMinTraveling.sort(self.paths, entrycircular=True, reversible=False)
+
+        # Fuse paths
+        if self.paths and self.options.fuse_paths:
+            rest_paths = self.paths[1:]
+            self.paths = [self.paths[0]]
+            for path in rest_paths:
+                if path[0] == self.paths[-1][-1]:
+                    self.paths[-1].extend(path[1:])
+                else:
+                    self.paths.append(path)
+
+        # Handle multipass & overcut
+        cut = self.multipassOvercut(self.paths, self.options.multipass, self.options.reversetoggle, self.options.overcut)
+
+        if self.options.dump_paths:
+            pointcount = 0
+            for path in self.paths:
+                pointcount += len(path)
+            self.report(f"Logging {len(cut)} cut paths containing "
+                        f"{pointcount} points:", 'log')
+            self.report(f"# driver version: {__version__}", 'log')
+            self.report(f"# docname: {self.svg.name}", 'log')
+            self.report(cut, 'log')
+
+        if self.options.preview:
+            extraText = None
+            if self.options.regmark:
+                extraText = f"Registration mark to origin distance: Left={self.reg_origin_X}mm, Top={self.reg_origin_Y}mm;\n Registration mark to mark distance: X={self.reg_width}mm, Y={self.reg_length}mm;"
+            if silhouette.read_dump.show_plotcuts(cut, buttons=True, extraText=extraText) > 0:
+                self.report("Preview aborted.", 'log')
+                return
+
+        if self.options.pressure == 0:
+            self.options.pressure = None
+        if self.options.speed == 0:
+            self.options.speed = None
+        if self.options.depth == -1:
+            self.options.depth = None
+
+        try:
+            dev = SilhouetteCameo(log=self.log, progress_cb=self.writeProgress,
+                                  cmdfile=self.cmdfile,
+                                  inc_queries=self.options.inc_queries,
+                                  dry_run=self.options.dry_run,
+                                  force_hardware=self.options.force_hardware)
+        except Exception as e:
+            self.report(e, 'error')
+            return
+        state = dev.status()  # hint at loading paper, if not ready.
+        self.report("status=%s" % (state), 'log')
+        self.report("device version: '%s'" % dev.get_version(), 'log')
+
         if input_path:
             with open(input_path, newline='') as csvfile:
                 csvreader = csv.DictReader(csvfile)
@@ -666,25 +774,114 @@ class SendtoSilhouette(EffectExtension):
                     self.options.pressure = int(row['pressure'])
                     self.options.speed = int(row['speed'])
                     self.options.multipass = int(row['multipass'])
-                    self.single()
+
+                    cut = self.multipassOvercut(self.paths, self.options.multipass, self.options.reversetoggle,
+                                                self.options.overcut)
+
+                    dev.setup(media=int(self.options.media, 10),
+                              pen=self.pen,
+                              toolholder=self.options.toolholder,
+                              cuttingmat=self.options.cuttingmat,
+                              sharpencorners=self.options.sharpencorners,
+                              sharpencorners_start=self.options.sharpencorners_start,
+                              sharpencorners_end=self.options.sharpencorners_end,
+                              autoblade=self.autoblade,
+                              depth=self.options.depth,
+                              sw_clipping=self.options.sw_clipping,
+                              bladediameter=self.options.bladediameter,
+                              pressure=self.options.pressure,
+                              speed=self.options.speed,
+                              skip_init=self.options.skip_init)
+
+                    if self.options.autocrop:
+                        # this takes much longer, if we have a complext drawing
+                        bbox = dev.plot(pathlist=cut,
+                                        mediawidth=convert_unit(self.svg.viewport_width, "mm"),
+                                        mediaheight=convert_unit(self.svg.viewport_height, "mm"),
+                                        margintop=0,
+                                        marginleft=0,
+                                        bboxonly=None,  # only return the bbox, do not draw it.
+                                        endposition="start",
+                                        regmark=self.options.regmark,
+                                        regsearch=self.options.regsearch,
+                                        regwidth=self.reg_width,
+                                        reglength=self.reg_length,
+                                        regoriginx=self.reg_origin_X,
+                                        regoriginy=self.reg_origin_Y,
+                                        skip_init=self.options.skip_init,
+                                        skip_reset=self.options.skip_reset)
+
+                        if len(bbox["bbox"].keys()):
+                            self.report(
+                                "autocrop left=%.1fmm top=%.1fmm" % (
+                                    bbox["bbox"]["llx"] * bbox["unit"],
+                                    bbox["bbox"]["ury"] * bbox["unit"]), 'log')
+                            self.options.x_off -= bbox["bbox"]["llx"] * bbox["unit"]
+                            self.options.y_off -= bbox["bbox"]["ury"] * bbox["unit"]
+
+                    bbox = dev.plot(pathlist=cut,
+                                    mediawidth=convert_unit(self.svg.viewport_width, "mm"),
+                                    mediaheight=convert_unit(self.svg.viewport_height, "mm"),
+                                    offset=(self.options.x_off, self.options.y_off),
+                                    bboxonly=self.options.bboxonly,
+                                    endposition=self.options.endposition,
+                                    end_paper_offset=self.options.end_offset,
+                                    regmark=self.options.regmark,
+                                    regsearch=self.options.regsearch,
+                                    regwidth=self.reg_width,
+                                    reglength=self.reg_length,
+                                    regoriginx=self.reg_origin_X,
+                                    regoriginy=self.reg_origin_Y,
+                                    skip_init=self.options.skip_init,
+                                    skip_reset=self.options.skip_reset)
+                    if len(bbox["bbox"].keys()) == 0:
+                        self.report("empty page?", 'error')
+                    else:
+                        self.writeProgress(1, 1, "bbox: (%.1f, %.1f)-(%.1f, %.1f)mm, %d points" % (
+                            bbox["bbox"]["llx"] * bbox["unit"],
+                            bbox["bbox"]["ury"] * bbox["unit"],
+                            bbox["bbox"]["urx"] * bbox["unit"],
+                            bbox["bbox"]["lly"] * bbox["unit"],
+                            bbox["bbox"]["count"]))
+                        self.report("", 'tty')
+                        state = dev.status()
+                        write_duration = time.time() - self.write_start_tstamp
+                        # we took write_duration seconds for actualy cutting
+                        # 100-device_buffer_perc percent of all data.
+                        # Thus we can compute the average write speed like this:
+                        if write_duration > 1.0:
+                            percent_per_sec = (100.0 - self.device_buffer_perc) / write_duration
+                        else:
+                            percent_per_sec = 1000.  # unreliable data
+
+                        wait_sec = 1
+                        if percent_per_sec > 1:  # prevent overflow if device_buffer_perc is almost 100
+                            while (percent_per_sec * wait_sec < 1.6):  # max 60 dots
+                                wait_sec *= 2
+                        dots = "."
+                        while self.options.wait_done and state == "moving":
+                            time.sleep(wait_sec)
+                            self.device_buffer_perc -= wait_sec * percent_per_sec
+                            if self.device_buffer_perc < 0.0:
+                                self.device_buffer_perc = 0.0
+                            self.writeProgress(1, 1, dots)
+                            dots += "."
+                            state = dev.status()
+                        self.device_buffer_perc = 0.0
+                        self.writeProgress(1, 1, dots)
+                    self.report("\nstatus=%s" % (state), 'log')
+
+
                     self.options.preview = False
+                    self.options.skip_init = True
 
                 self.options.preview = was_preview
+                self.options.skip_init = False
         else:
             inkex.errormsg("No input file specified.")
 
 
     def single(self):
-        log_path = self.options.logfile or self.default_logfile_path
-        mode = "a" if self.options.append_logs else "w"
-        self.log = open(log_path, mode)
-        if self.tty:
-            self.log = teeFile(self.tty, self.log)
-
-        if self.options.cmdfile:
-            mode = "ab" if self.options.append_logs else "wb"
-            self.cmdfile = open(self.options.cmdfile, mode)
-
         self.logEnvironment()
 
         # Registration Mark Selection/Calcuation
