@@ -290,6 +290,14 @@ class SendtoSilhouette(EffectExtension):
         pars.add_argument("--sequence2", type = str)
         pars.add_argument("--enable_sequence3", type = Boolean, default = False)
         pars.add_argument("--sequence3", type = str)
+        pars.add_argument("--enable_sequence4", type = Boolean, default = False)
+        pars.add_argument("--sequence4", type = str)
+        pars.add_argument("--enable_sequence5", type = Boolean, default = False)
+        pars.add_argument("--sequence5", type = str)
+        pars.add_argument("--enable_sequence6", type = Boolean, default = False)
+        pars.add_argument("--sequence6", type = str)
+        pars.add_argument("--enable_sequence7", type = Boolean, default = False)
+        pars.add_argument("--sequence7", type = str)
 
 
     def report(self, message, level):
@@ -659,6 +667,14 @@ class SendtoSilhouette(EffectExtension):
             self.sequence(self.options.sequence2)
         elif self.options.enable_sequence3:
             self.sequence(self.options.sequence3)
+        elif self.options.enable_sequence4:
+            self.sequence(self.options.sequence4)
+        elif self.options.enable_sequence5:
+            self.sequence(self.options.sequence5)
+        elif self.options.enable_sequence6:
+            self.sequence(self.options.sequence6)
+        elif self.options.enable_sequence7:
+            self.sequence(self.options.sequence7)
         else:
             self.single()
 

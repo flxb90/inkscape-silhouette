@@ -205,6 +205,22 @@ Always use the least amount of blade possible.
             <param name="enable_sequence3" type="bool" _gui-text="enable sequence #3" />
             <param name="sequence3" type="path" mode="file" _gui-text="" />
         </vbox>
+        <vbox>
+            <param name="enable_sequence4" type="bool" _gui-text="enable sequence #4" />
+            <param name="sequence4" type="path" mode="file" _gui-text="" />
+        </vbox>
+        <vbox>
+            <param name="enable_sequence5" type="bool" _gui-text="enable sequence #5" />
+            <param name="sequence5" type="path" mode="file" _gui-text="" />
+        </vbox>
+        <vbox>
+            <param name="enable_sequence6" type="bool" _gui-text="enable sequence #6" />
+            <param name="sequence6" type="path" mode="file" _gui-text="" />
+        </vbox>
+        <vbox>
+            <param name="enable_sequence7" type="bool" _gui-text="enable sequence #7" />
+            <param name="sequence7" type="path" mode="file" _gui-text="" />
+        </vbox>
     </page>
   </param>
 
